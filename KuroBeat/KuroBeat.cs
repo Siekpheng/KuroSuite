@@ -221,7 +221,7 @@ namespace KuroBeat
 
         public string ExePath { get; private set; }
         public string ConnectUrl { get { return "http://127.0.0.1:" + port + "/connect"; } }
-        public string PhoneUrl { get { return "http://" + GetPrimaryLanIp() + ":" + port; } }
+        public string PhoneUrl { get { return "http://kurobeat.local:" + port; } }
         public bool IsRunning
         {
             get
