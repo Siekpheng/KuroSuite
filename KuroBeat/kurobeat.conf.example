@@ -6,5 +6,7 @@ borderless = false
 always_on_top = false
 fullscreen = false
 show_track_info = true
+remote_server = true  # Auto-start Documents\ytm-remote\YtmRemoteServer.exe
+remote_port = 8765
 win_w = 1280
 win_h = 720

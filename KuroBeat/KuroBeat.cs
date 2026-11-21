@@ -7,6 +7,9 @@ using System.Drawing.Imaging;
 using System.Drawing.Text;
 using System.Globalization;
 using System.IO;
+using System.Net;
+using System.Net.NetworkInformation;
+using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
@@ -32,6 +35,8 @@ namespace KuroBeat
         public bool AlwaysOnTop = false;
         public bool Fullscreen = false;
         public bool ShowTrackInfo = true;
+        public bool RemoteServer = true;
+        public int RemotePort = 8765;
         public int WinX = -1;
         public int WinY = -1;
         public int WinW = 1280;
@@ -76,6 +81,8 @@ namespace KuroBeat
                     else if (k == "always_on_top") c.AlwaysOnTop = (v == "true" || v == "1");
                     else if (k == "fullscreen") c.Fullscreen = (v == "true" || v == "1");
                     else if (k == "show_track_info") c.ShowTrackInfo = (v != "false" && v != "0");
+                    else if (k == "remote_server") c.RemoteServer = (v != "false" && v != "0");
+                    else if (k == "remote_port" && int.TryParse(v, out n)) c.RemotePort = Math.Max(1024, Math.Min(65535, n));
                     else if (k == "win_x" && int.TryParse(v, out n)) c.WinX = n;
                     else if (k == "win_y" && int.TryParse(v, out n)) c.WinY = n;
                     else if (k == "win_w" && int.TryParse(v, out n)) c.WinW = Math.Max(480, n);
@@ -102,6 +109,8 @@ namespace KuroBeat
                 sb.AppendLine("always_on_top = " + (AlwaysOnTop ? "true" : "false"));
                 sb.AppendLine("fullscreen = " + (Fullscreen ? "true" : "false"));
                 sb.AppendLine("show_track_info = " + (ShowTrackInfo ? "true" : "false"));
+                sb.AppendLine("remote_server = " + (RemoteServer ? "true" : "false"));
+                sb.AppendLine("remote_port = " + RemotePort);
                 sb.AppendLine("win_x = " + WinX);
                 sb.AppendLine("win_y = " + WinY);
                 sb.AppendLine("win_w = " + WinW);
@@ -191,6 +200,208 @@ namespace KuroBeat
     }
 
     // =========================================================================
+    // INTEGRATED YOUTUBE MUSIC PHONE REMOTE SERVER (YtmRemoteServer.exe)
+    // =========================================================================
+    sealed class YtmRemoteBridge : IDisposable
+    {
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+        static extern IntPtr CreateJobObject(IntPtr lpJobAttributes, string lpName);
+        [DllImport("kernel32.dll")]
+        static extern bool SetInformationJobObject(IntPtr hJob, int JobObjectInfoClass, IntPtr lpJobObjectInfo, uint cbJobObjectInfoLength);
+        [DllImport("kernel32.dll", SetLastError = true)]
+        static extern bool AssignProcessToJobObject(IntPtr hJob, IntPtr hProcess);
+
+        readonly int port;
+        readonly IntPtr job;
+        readonly object procLock = new object();
+        Process proc;
+        bool ownedByUs;
+        bool runningExternal;
+        string lastError = "";
+
+        public string ExePath { get; private set; }
+        public string ConnectUrl { get { return "http://127.0.0.1:" + port + "/connect"; } }
+        public string PhoneUrl { get { return "http://" + GetPrimaryLanIp() + ":" + port; } }
+        public bool IsRunning
+        {
+            get
+            {
+                lock (procLock)
+                {
+                    if (proc != null)
+                    {
+                        try { if (!proc.HasExited) return true; } catch { }
+                    }
+                    return runningExternal && IsPortOpen(port);
+                }
+            }
+        }
+        public string StatusLabel
+        {
+            get
+            {
+                if (string.IsNullOrEmpty(ExePath)) return "YtmRemoteServer.exe not found";
+                if (IsRunning) return PhoneUrl;
+                if (!string.IsNullOrEmpty(lastError)) return lastError;
+                return "Stopped";
+            }
+        }
+
+        public YtmRemoteBridge(int port)
+        {
+            this.port = port;
+            ExePath = ResolveExePath();
+            job = CreateKillOnCloseJob();
+        }
+
+        static string ResolveExePath()
+        {
+            string baseDir = AppDomain.CurrentDomain.BaseDirectory.TrimEnd('\\');
+            string parentDir = Path.GetDirectoryName(baseDir) ?? "";
+            string[] candidates =
+            {
+                Path.Combine(baseDir, "YtmRemoteServer.exe"),
+                Path.Combine(parentDir, @"ytm-remote\YtmRemoteServer.exe"),
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), @"ytm-remote\YtmRemoteServer.exe"),
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), @"Documents\ytm-remote\YtmRemoteServer.exe")
+            };
+            foreach (string c in candidates)
+            {
+                if (!string.IsNullOrEmpty(c) && File.Exists(c)) return c;
+            }
+            return null;
+        }
+
+        static IntPtr CreateKillOnCloseJob()
+        {
+            IntPtr h = CreateJobObject(IntPtr.Zero, null);
+            if (h == IntPtr.Zero) return IntPtr.Zero;
+            IntPtr info = Marshal.AllocHGlobal(144);
+            for (int i = 0; i < 144; i++) Marshal.WriteByte(info, i, 0);
+            Marshal.WriteInt32(info, 16, 0x00002000); // JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+            SetInformationJobObject(h, 9, info, 144);
+            Marshal.FreeHGlobal(info);
+            return h;
+        }
+
+        static bool IsPortOpen(int port)
+        {
+            try
+            {
+                using (var tcp = new TcpClient())
+                {
+                    IAsyncResult ar = tcp.BeginConnect("127.0.0.1", port, null, null);
+                    bool ok = ar.AsyncWaitHandle.WaitOne(120, false);
+                    if (!ok) return false;
+                    tcp.EndConnect(ar);
+                    return true;
+                }
+            }
+            catch { return false; }
+        }
+
+        static string GetPrimaryLanIp()
+        {
+            try
+            {
+                foreach (NetworkInterface ni in NetworkInterface.GetAllNetworkInterfaces())
+                {
+                    if (ni.OperationalStatus != OperationalStatus.Up) continue;
+                    if (ni.NetworkInterfaceType == NetworkInterfaceType.Loopback) continue;
+                    string name = (ni.Name + " " + ni.Description).ToLowerInvariant();
+                    if (name.Contains("virtual") || name.Contains("vmware") || name.Contains("hyper-v") ||
+                        name.Contains("vbox") || name.Contains("warp") || name.Contains("tailscale") ||
+                        name.Contains("zerotier") || name.Contains("wsl"))
+                        continue;
+                    foreach (UnicastIPAddressInformation addr in ni.GetIPProperties().UnicastAddresses)
+                    {
+                        if (addr.Address.AddressFamily != AddressFamily.InterNetwork) continue;
+                        string ip = addr.Address.ToString();
+                        if (ip.StartsWith("192.168.") || ip.StartsWith("10.") || ip.StartsWith("172."))
+                            return ip;
+                    }
+                }
+            }
+            catch { }
+            return "127.0.0.1";
+        }
+
+        public void Start()
+        {
+            lock (procLock)
+            {
+                if (IsRunning) return;
+                ExePath = ResolveExePath();
+                if (string.IsNullOrEmpty(ExePath)) { lastError = "Not found"; return; }
+                if (IsPortOpen(port))
+                {
+                    runningExternal = true;
+                    ownedByUs = false;
+                    lastError = "";
+                    return;
+                }
+                try
+                {
+                    var psi = new ProcessStartInfo
+                    {
+                        FileName = ExePath,
+                        Arguments = "--port " + port,
+                        WorkingDirectory = Path.GetDirectoryName(ExePath),
+                        UseShellExecute = false,
+                        CreateNoWindow = true,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true
+                    };
+                    var p = new Process { StartInfo = psi };
+                    p.OutputDataReceived += (s, e) => { };
+                    p.ErrorDataReceived += (s, e) => { };
+                    if (p.Start())
+                    {
+                        proc = p;
+                        ownedByUs = true;
+                        runningExternal = false;
+                        lastError = "";
+                        if (job != IntPtr.Zero) { try { AssignProcessToJobObject(job, p.Handle); } catch { } }
+                        p.BeginOutputReadLine();
+                        p.BeginErrorReadLine();
+                    }
+                }
+                catch (Exception ex) { lastError = ex.Message; }
+            }
+        }
+
+        public void Stop()
+        {
+            lock (procLock)
+            {
+                if (ownedByUs && proc != null)
+                {
+                    try { if (!proc.HasExited) proc.Kill(); } catch { }
+                    try { proc.Dispose(); } catch { }
+                    proc = null;
+                    ownedByUs = false;
+                }
+            }
+        }
+
+        public void OpenConnectPage()
+        {
+            if (!IsRunning) Start();
+            try { Process.Start(ConnectUrl); } catch { }
+        }
+
+        public void CopyPhoneUrl()
+        {
+            try { Clipboard.SetText(PhoneUrl); } catch { }
+        }
+
+        public void Dispose()
+        {
+            Stop();
+        }
+    }
+
+    // =========================================================================
     // MAIN MONITOR VISUALIZER WINDOW
     // =========================================================================
     sealed class VisualizerForm : Form
@@ -208,6 +419,7 @@ namespace KuroBeat
         readonly WasapiCava audio;
         readonly MediaReader media;
         readonly VisualizerRenderer renderer;
+        readonly YtmRemoteBridge remoteBridge;
         readonly System.Windows.Forms.Timer frameTimer;
         readonly Thread mediaThread;
         readonly NotifyIcon tray;
@@ -245,6 +457,8 @@ namespace KuroBeat
             audio = new WasapiCava(96);
             media = new MediaReader();
             renderer = new VisualizerRenderer();
+            remoteBridge = new YtmRemoteBridge(cfg.RemotePort);
+            if (cfg.RemoteServer) remoteBridge.Start();
 
             Size = new Size(cfg.WinW, cfg.WinH);
             if (cfg.WinX >= -32000 && cfg.WinY >= -32000 && IsLocationOnAnyScreen(cfg.WinX, cfg.WinY, cfg.WinW, cfg.WinH))
@@ -366,9 +580,24 @@ namespace KuroBeat
             var itemTop = new ToolStripMenuItem("Always on Top (T)", null, (s, e) => { cfg.AlwaysOnTop = !cfg.AlwaysOnTop; TopMost = cfg.AlwaysOnTop; cfg.Save(); });
             var itemHud = new ToolStripMenuItem("Show Track Info Card (H)", null, (s, e) => { cfg.ShowTrackInfo = !cfg.ShowTrackInfo; cfg.Save(); });
 
+            var remoteMenu = new ToolStripMenuItem("YouTube Music Phone Remote");
+            var remoteStatus = new ToolStripMenuItem("Status: Starting...") { Enabled = false };
+            var remoteQr = new ToolStripMenuItem("Open Phone QR / Connect Page (R)", null, (s, e) => remoteBridge.OpenConnectPage());
+            var remoteCopy = new ToolStripMenuItem("Copy Phone URL", null, (s, e) => remoteBridge.CopyPhoneUrl());
+            var remoteAuto = new ToolStripMenuItem("Auto-Start Phone Remote With KuroBeat", null, (s, e) =>
+            {
+                cfg.RemoteServer = !cfg.RemoteServer;
+                cfg.Save();
+                if (cfg.RemoteServer) remoteBridge.Start();
+                else remoteBridge.Stop();
+            });
+            remoteMenu.DropDownItems.AddRange(new ToolStripItem[] { remoteStatus, new ToolStripSeparator(), remoteQr, remoteCopy, new ToolStripSeparator(), remoteAuto });
+
             m.Items.Add(styleMenu);
             m.Items.Add(themeMenu);
             m.Items.Add(bgMenu);
+            m.Items.Add(new ToolStripSeparator());
+            m.Items.Add(remoteMenu);
             m.Items.Add(new ToolStripSeparator());
             m.Items.Add(itemFs);
             m.Items.Add(itemBorder);
@@ -395,6 +624,8 @@ namespace KuroBeat
                 ((ToolStripMenuItem)bgMenu.DropDownItems[0]).Checked = cfg.Background == BgStyle.MatrixAndBlur;
                 ((ToolStripMenuItem)bgMenu.DropDownItems[1]).Checked = cfg.Background == BgStyle.BlurredCover;
                 ((ToolStripMenuItem)bgMenu.DropDownItems[2]).Checked = cfg.Background == BgStyle.PureBlack;
+                remoteStatus.Text = "Remote: " + remoteBridge.StatusLabel;
+                remoteAuto.Checked = cfg.RemoteServer;
                 itemFs.Checked = cfg.Fullscreen;
                 itemBorder.Checked = cfg.Borderless;
                 itemTop.Checked = cfg.AlwaysOnTop;
@@ -495,6 +726,7 @@ namespace KuroBeat
 
             var defs = new List<Tuple<string, Action>>
             {
+                Tuple.Create(remoteBridge.IsRunning ? "Phone QR" : "Start Remote", (Action)(() => remoteBridge.OpenConnectPage())),
                 Tuple.Create("Style: " + styleName, (Action)(() => { cfg.Style = (VisStyle)(((int)cfg.Style + 1) % 3); cfg.Save(); })),
                 Tuple.Create("Theme: " + themeName, (Action)(() => { cfg.Theme = (ThemePreset)(((int)cfg.Theme + 1) % 4); cfg.Save(); })),
                 Tuple.Create(bgName, (Action)(() => { cfg.Background = (BgStyle)(((int)cfg.Background + 1) % 3); cfg.Save(); })),
@@ -629,6 +861,7 @@ namespace KuroBeat
             else if (e.KeyCode == Keys.B) { cfg.Borderless = !cfg.Borderless; ApplyWindowStyle(); cfg.Save(); }
             else if (e.KeyCode == Keys.T) { cfg.AlwaysOnTop = !cfg.AlwaysOnTop; TopMost = cfg.AlwaysOnTop; cfg.Save(); }
             else if (e.KeyCode == Keys.H) { cfg.ShowTrackInfo = !cfg.ShowTrackInfo; cfg.Save(); }
+            else if (e.KeyCode == Keys.R) remoteBridge.OpenConnectPage();
             else if (e.KeyCode == Keys.Space) media.SendCommand(MediaCommand.TogglePlayPause);
             else if (e.KeyCode == Keys.Left) media.SendCommand(MediaCommand.Previous);
             else if (e.KeyCode == Keys.Right) media.SendCommand(MediaCommand.Next);
@@ -657,6 +890,7 @@ namespace KuroBeat
                 stopping = true;
                 try { timeEndPeriod(1); } catch { }
                 if (frameTimer != null) frameTimer.Dispose();
+                if (remoteBridge != null) remoteBridge.Dispose();
                 if (renderer != null) renderer.Dispose();
                 if (audio != null) audio.Dispose();
                 if (media != null) media.Dispose();
