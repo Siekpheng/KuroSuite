@@ -9,6 +9,6 @@ $refs = @(
   '/r:C:\Windows\System32\WinMetadata\Windows.Storage.winmd'
 )
 $dir = Split-Path -Parent $MyInvocation.MyCommand.Path
-& $csc /nologo /platform:x64 /optimize+ /target:winexe /out:"$dir\KuroBeat.exe" @refs "$dir\KuroBeat.cs"
+& $csc /nologo /platform:x64 /optimize+ /target:winexe /win32icon:"$dir\kurobeat.ico" /out:"$dir\KuroBeat.exe" @refs "$dir\KuroBeat.cs"
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 Write-Host "Built $dir\KuroBeat.exe" -ForegroundColor Cyan

@@ -668,6 +668,12 @@ namespace KuroBeat
 
         static Icon CreateAppIcon()
         {
+            try
+            {
+                Icon embedded = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
+                if (embedded != null) return embedded;
+            }
+            catch { }
             using (var bmp = new Bitmap(32, 32))
             using (var g = Graphics.FromImage(bmp))
             {

@@ -9,6 +9,6 @@ $refs = @(
   '/r:C:\Windows\System32\WinMetadata\Windows.Storage.winmd'
 )
 $dir = Split-Path -Parent $MyInvocation.MyCommand.Path
-& $csc /nologo /platform:x64 /optimize+ /target:exe /out:"$dir\trofeo_lcd.exe" @refs "$dir\KuroHUD.cs"
+& $csc /nologo /platform:x64 /optimize+ /target:exe /win32icon:"$dir\kurohud.ico" /out:"$dir\trofeo_lcd.exe" @refs "$dir\KuroHUD.cs"
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 Write-Host "Built $dir\trofeo_lcd.exe (KuroHUD)" -ForegroundColor Cyan

@@ -1721,6 +1721,12 @@ namespace LovingcoolLcd
 
         static Icon CreateCyanIcon()
         {
+            try
+            {
+                Icon embedded = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
+                if (embedded != null) return embedded;
+            }
+            catch { }
             using (var bmp = new Bitmap(16, 16))
             using (var g = Graphics.FromImage(bmp))
             {
@@ -2103,6 +2109,7 @@ namespace LovingcoolLcd
         {
             this.app = app;
             Text = "KuroHUD — Control Center";
+            try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
             Size = new Size(740, 625);
             FormBorderStyle = FormBorderStyle.FixedSingle;
             MaximizeBox = false;
