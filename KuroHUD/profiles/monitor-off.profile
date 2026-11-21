@@ -1,0 +1,15 @@
+brightness = 0
+background_effect = none
+background_color = #000000
+music_screen = false
+gaming_screen = false
+gaming_layout = classic
+gaming_bg = color
+gaming_bg_color = #000000
+gaming_colors = #000000, #000000
+gaming_text_color = #000000
+text_color = #000000
+clock_color = #000000
+color = #000000
+layout = default
+hide = spectrum, clock, clock_date, cpu, gpu, mem, uptime, time, date, net, disk, volume, nowplaying, weather, ticker, dashboard

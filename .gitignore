@@ -1,0 +1,20 @@
+# Compiled binaries & runtime artifacts
+*.exe
+*.dll
+*.pdb
+*.log
+*_status.txt
+trofeo-errors.txt
+profiles/active
+layouts/unicode_music_*.png
+layouts/unicode-music.layout
+
+# Local user configs
+kurobeat.conf
+lovingcool.conf
+trofeo.conf
+*.bak
+
+# Temporary preview images
+preview_*.png
+verify_*.png

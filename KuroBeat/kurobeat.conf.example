@@ -1,0 +1,10 @@
+# KuroBeat Configuration
+style = bars          # bars | mirror | radial
+background = matrix   # matrix | blur | black
+theme = cyan          # cyan | adaptive | green | violet
+borderless = false
+always_on_top = false
+fullscreen = false
+show_track_info = true
+win_w = 1280
+win_h = 720

@@ -1,0 +1,73 @@
+# Custom Lovingcool-matching Cyan HUD Theme (1920x462)
+image x=0 y=0 w=100 h=100 file="layouts/lovingcool_frame.png"
+
+# --- CARD 1: CLOCK & WEATHER (x=22..474, center=12.92%) ---
+text x=2.6 y=6.8   size=2.0 color=#00FFFF text="SYSTEM CLOCK"
+text x=13.02 y=29.4 anchor=c w=21.0 size=10.5 color=#007A8C text="{time_short}"
+text x=12.92 y=29.0 anchor=c w=21.0 size=10.5 color=#E6FFFF text="{time_short}"
+text x=12.92 y=48.5 anchor=c w=21.0 size=3.2  color=#9ED8E6 text="{date}"
+
+text x=2.6 y=66.2  size=2.0 color=#00FFFF text="LOCAL WEATHER"
+text x=2.6 y=79.5  anchor=l w=9.0  size=6.4 color=#E6FFFF text="{weather_temp}"
+text x=23.4 y=79.5 anchor=r w=12.5 size=3.1 color=#9ED8E6 text="{weather_city}"
+
+# --- CARD 2: CPU (x=492..948) ---
+text x=26.9 y=6.8 size=3.4 color=#00FFFF text="CPU"
+text x=48.1 y=7.3 anchor=tr size=2.2 color=#9ED8E6 text="RYZEN 5 5600"
+ring x=31.4 y=39.2 w=11.8 h=41.5 anchor=c value=cpu min=0 max=100 thick=16 color=#00FFFF back=#0E343E hot=85 hot_color=#FF4060
+text x=31.4 y=39.2 anchor=c size=5.2 color=#E6FFFF text="{cpu_temp}"
+
+text x=38.8 y=17.0 size=1.8 color=#00AFBF text="LOAD"
+text x=38.8 y=22.5 size=3.7 color=#E6FFFF text="{cpu}"
+text x=38.8 y=34.2 size=1.8 color=#00AFBF text="POWER"
+text x=38.8 y=39.7 size=3.7 color=#E6FFFF text="{cpu_power}"
+text x=38.8 y=51.4 size=1.8 color=#00AFBF text="CLOCK"
+text x=38.8 y=56.9 size=3.1 color=#9ED8E6 text="{cpu_freq}"
+
+text x=26.9 y=73.4 size=2.0 color=#00FFFF text="CPU THERMAL"
+text x=48.1 y=73.4 anchor=tr size=2.7 color=#E6FFFF text="{cpu_temp}"
+bar  x=26.9 y=82.0 w=21.2 h=5.4 value=cpu_temp min=25 max=95 color=#00FFFF back=#0E343E hot=80 hot_color=#FF4060
+
+# --- CARD 3: GPU (x=966..1422) ---
+text x=51.6 y=6.8 size=3.4 color=#00FFFF text="GPU"
+text x=72.8 y=7.3 anchor=tr size=2.2 color=#9ED8E6 text="RX 6700 XT"
+ring x=56.1 y=39.2 w=11.8 h=41.5 anchor=c value=gpu min=0 max=100 thick=16 color=#00FFFF back=#0E343E hot=85 hot_color=#FF4060
+text x=56.1 y=39.2 anchor=c size=5.2 color=#E6FFFF text="{gpu_temp}"
+
+text x=63.5 y=17.0 size=1.8 color=#00AFBF text="LOAD"
+text x=63.5 y=22.5 size=3.7 color=#E6FFFF text="{gpu}"
+text x=63.5 y=34.2 size=1.8 color=#00AFBF text="POWER"
+text x=63.5 y=39.7 size=3.7 color=#E6FFFF text="{gpu_power}"
+text x=63.5 y=51.4 size=1.8 color=#00AFBF text="HOTSPOT"
+text x=63.5 y=56.9 size=3.1 color=#9ED8E6 text="{gpu_hotspot}"
+
+text x=51.6 y=73.4 size=2.0 color=#00FFFF text="GPU THERMAL"
+text x=72.8 y=73.4 anchor=tr size=2.7 color=#E6FFFF text="{gpu_temp}"
+bar  x=51.6 y=82.0 w=21.2 h=5.4 value=gpu_temp min=25 max=95 color=#00FFFF back=#0E343E hot=82 hot_color=#FF4060
+
+# --- CARD 4A: MEMORY (x=1440..1898, y=20..264) ---
+text x=76.3 y=6.8 size=3.4 color=#00FFFF text="MEM"
+text x=97.6 y=7.3 anchor=tr size=2.4 color=#E6FFFF text="{ram_used} / {ram_total}"
+ring x=80.0 y=29.2 w=8.8 h=26.0 anchor=c value=ram min=0 max=100 thick=17 color=#00FFFF back=#0E343E hot=90 hot_color=#FF4060
+text x=80.0 y=29.2 anchor=c size=3.7 color=#E6FFFF text="{ram}"
+
+text x=85.5 y=17.8 size=1.8 color=#00AFBF text="USED"
+text x=85.5 y=22.8 size=3.1 color=#E6FFFF text="{ram_used}"
+text x=85.5 y=30.5 size=1.8 color=#00AFBF text="TOTAL"
+text x=85.5 y=35.5 size=3.1 color=#9ED8E6 text="{ram_total}"
+
+bar  x=76.3 y=47.8 w=21.25 h=4.1 value=ram min=0 max=100 color=#00FFFF back=#0E343E hot=90 hot_color=#FF4060
+
+# --- CARD 4B: NETWORK & DISK (x=1440..1898, y=280..442) ---
+text x=76.3 y=63.2 size=2.0 color=#00FFFF text="NETWORK"
+text x=88.2 y=63.2 size=2.0 color=#00FFFF text="DISK I/O"
+
+text x=76.3 y=70.2 size=1.7 color=#00AFBF text="DOWN"
+text x=76.3 y=74.4 w=10.0 size=2.8 color=#E6FFFF text="{net_down}"
+text x=76.3 y=82.2 size=1.7 color=#00AFBF text="UP"
+text x=76.3 y=86.4 w=10.0 size=2.8 color=#9ED8E6 text="{net_up}"
+
+text x=88.2 y=70.2 size=1.7 color=#00AFBF text="READ"
+text x=88.2 y=74.4 w=10.0 size=2.8 color=#E6FFFF text="{disk_read}"
+text x=88.2 y=82.2 size=1.7 color=#00AFBF text="WRITE"
+text x=88.2 y=86.4 w=10.0 size=2.8 color=#9ED8E6 text="{disk_write}"
