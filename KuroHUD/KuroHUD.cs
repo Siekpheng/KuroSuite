@@ -161,7 +161,7 @@ namespace LovingcoolLcd
                     WriteIfMissing("force-dashboard.profile", "music_screen = false\r\ngaming_screen = false\r\n");
                     WriteIfMissing("force-music.profile", "music_screen = true\r\ngaming_screen = false\r\nlayout = music\r\nlayout_spectrum = true\r\n");
                     WriteProfileExact("force-gaming.profile", "gaming_screen = true\r\nmusic_screen = false\r\ngaming_gpu_percent = 1\r\ngaming_delay = 0\r\ngaming_hold = 60\r\n");
-                    WriteProfileExact("unicode-music.profile", "music_screen = false\r\ngaming_screen = false\r\nlayout = unicode-music\r\nlayout_spectrum = false\r\n");
+                    WriteProfileExact("unicode-music.profile", "music_screen = false\r\ngaming_screen = false\r\nlayout = unicode-music\r\nlayout_spectrum = true\r\n");
                 }
                 catch { }
             }
