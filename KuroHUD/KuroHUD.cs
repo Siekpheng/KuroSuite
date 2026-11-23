@@ -161,7 +161,7 @@ namespace LovingcoolLcd
                     WriteIfMissing("force-dashboard.profile", "music_screen = false\r\ngaming_screen = false\r\n");
                     WriteIfMissing("force-music.profile", "music_screen = true\r\ngaming_screen = false\r\nlayout = music\r\nlayout_spectrum = true\r\n");
                     WriteProfileExact("force-gaming.profile", "gaming_screen = true\r\nmusic_screen = false\r\ngaming_gpu_percent = 1\r\ngaming_delay = 0\r\ngaming_hold = 60\r\n");
-                    WriteProfileExact("unicode-music.profile", "music_screen = false\r\ngaming_screen = false\r\nlayout = unicode-music\r\nlayout_spectrum = true\r\n");
+                    WriteProfileExact("unicode-music.profile", "music_screen = false\r\ngaming_screen = false\r\nlayout = unicode-music\r\nlayout_spectrum = false\r\n");
                 }
                 catch { }
             }
@@ -1418,8 +1418,10 @@ namespace LovingcoolLcd
             this.cfg.Save();
             if (File.Exists(cfg.ConfPath)) lastConfWrite = File.GetLastWriteTimeUtc(cfg.ConfPath);
             TrofeoConfSync.EnsureProfiles();
-            // Let unified CyanDualDisplay control Gaming Mode for both screens (prevents trofeo_lcd_core false triggers)
+            // Let unified KuroHUD own the tray icon & gaming/spectrum behavior cleanly
             TrofeoConfSync.SetActiveValue("gaming_screen", "false");
+            TrofeoConfSync.SetActiveValue("start_in_tray", "false");
+            TrofeoConfSync.SetActiveValue("layout_spectrum", "false");
 
             bool createdEv;
             var evSec = new EventWaitHandleSecurity();
