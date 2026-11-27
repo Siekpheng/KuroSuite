@@ -47,10 +47,11 @@ cd KuroSuite
 # One-step KuroBeat install (builds KuroBeat\KuroBeat.exe + creates Start Menu shortcut)
 powershell -ExecutionPolicy Bypass -File .\KuroBeat\install.ps1
 
-# Or build KuroBeat only (outputs KuroBeat\KuroBeat.exe)
-powershell -ExecutionPolicy Bypass -File .\KuroBeat\build.ps1
+# One-step KuroHUD install (builds KuroHUD\trofeo_lcd.exe + Start Menu shortcut + TrofeoLCD startup task)
+powershell -ExecutionPolicy Bypass -File .\KuroHUD\install.ps1
 
-# Build KuroHUD (outputs KuroHUD\trofeo_lcd.exe)
+# Or build binaries only without shortcuts/tasks:
+powershell -ExecutionPolicy Bypass -File .\KuroBeat\build.ps1
 powershell -ExecutionPolicy Bypass -File .\KuroHUD\build.ps1
 ```
 

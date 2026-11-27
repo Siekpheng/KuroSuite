@@ -2,10 +2,12 @@
 *.exe
 *.dll
 *.pdb
+*.bin
 *.log
 *_status.txt
 trofeo-errors.txt
 profiles/active
+profiles/wallpaper.profile
 layouts/unicode_music_*.png
 layouts/unicode-music.layout
 
