@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b0b0f" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>YTM Remote</title>
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <div id="ambientBg" class="ambient-bg"></div>
+  <div class="ambient-overlay"></div>
+
+  <div class="app-frame">
+    <!-- Top Status Header -->
+    <header class="app-header">
+      <div class="brand-row">
+        <img src="/icon.svg" alt="" class="brand-icon" />
+        <span class="brand-name">Music</span>
+      </div>
+      <div id="statusPill" class="status-pill">
+        <span id="statusDot" class="status-dot"></span>
+        <span id="statusText">Connecting...</span>
+      </div>
+    </header>
+
+    <!-- Main Tab Views -->
+    <main class="views-container">
+      <!-- HOME VIEW -->
+      <section id="viewHome" class="view-panel">
+        <div class="section-bar">
+          <h2 class="section-heading">Home</h2>
+          <button id="refreshHomeBtn" class="small-pill-btn" type="button">Refresh</button>
+        </div>
+        <div id="homeStatus" class="feed-status">Loading your YouTube Music Home...</div>
+        <div id="homeShelves" class="home-shelves"></div>
+      </section>
+
+      <!-- NOW PLAYING VIEW -->
+      <section id="viewPlayer" class="view-panel active">
+        <div class="player-layout">
+          <div class="artwork-section">
+            <div id="artFrame" class="art-frame paused">
+              <img id="albumArt" class="album-art" alt="Album artwork" />
+              <div id="artPlaceholder" class="art-placeholder">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+                  <path d="M9 18V5l12-2v13" stroke-linecap="round" stroke-linejoin="round"/>
+                  <circle cx="6" cy="18" r="3"/>
+                  <circle cx="18" cy="16" r="3"/>
+                </svg>
+              </div>
+            </div>
+          </div>
+
+          <div class="track-info">
+            <h1 id="trackTitle" class="track-title">Nothing Playing</h1>
+            <p id="trackArtist" class="track-artist">Open YouTube Music on your PC</p>
+          </div>
+
+          <div class="progress-section">
+            <input id="seekBar" class="slider seek-slider" type="range" min="0" max="100" step="0.5" value="0" aria-label="Seek track" />
+            <div class="time-row">
+              <span id="currentTime">0:00</span>
+              <span id="durationTime">0:00</span>
+            </div>
+          </div>
+
+          <div class="controls-section">
+            <button id="prevBtn" class="ctrl-btn secondary" aria-label="Previous track">
+              <svg viewBox="0 0 24 24" fill="currentColor">
+                <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/>
+              </svg>
+            </button>
+
+            <button id="playPauseBtn" class="ctrl-btn primary" aria-label="Play or pause">
+              <svg id="playIcon" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M8 5v14l11-7z"/>
+              </svg>
+              <svg id="pauseIcon" viewBox="0 0 24 24" fill="currentColor" class="hidden">
+                <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
+              </svg>
+            </button>
+
+            <button id="nextBtn" class="ctrl-btn secondary" aria-label="Next track">
+              <svg viewBox="0 0 24 24" fill="currentColor">
+                <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/>
+              </svg>
+            </button>
+          </div>
+
+          <button id="upNextPreviewBtn" class="upnext-preview hidden" type="button">
+            <span class="upnext-tag">UP NEXT</span>
+            <span id="upNextPreviewText" class="upnext-preview-text"></span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="9 18 15 12 9 6"/>
+            </svg>
+          </button>
+
+          <div class="volume-card">
+            <div class="volume-header">
+              <span class="volume-label">PC Master Volume</span>
+              <span id="volumeValue" class="volume-value">--%</span>
+            </div>
+
+            <div class="volume-controls">
+              <button id="muteBtn" class="vol-icon-btn" aria-label="Toggle mute">
+                <svg id="volHighIcon" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>
+                </svg>
+                <svg id="volMutedIcon" viewBox="0 0 24 24" fill="currentColor" class="hidden">
+                  <path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/>
+                </svg>
+              </button>
+
+              <button id="volDownBtn" class="vol-step-btn" aria-label="Volume down 2%">−</button>
+              <input id="volumeSlider" class="slider volume-slider" type="range" min="0" max="100" step="1" value="50" aria-label="PC master volume" />
+              <button id="volUpBtn" class="vol-step-btn" aria-label="Volume up 2%">+</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- UP NEXT QUEUE VIEW -->
+      <section id="viewQueue" class="view-panel">
+        <div class="section-bar">
+          <h2 class="section-heading">Up Next</h2>
+          <button id="refreshQueueBtn" class="small-pill-btn" type="button">Refresh</button>
+        </div>
+        <div id="queueStatus" class="feed-status">Loading Up Next queue...</div>
+        <div id="queueList" class="track-list"></div>
+      </section>
+
+      <!-- SEARCH VIEW -->
+      <section id="viewSearch" class="view-panel">
+        <form id="searchForm" class="search-form">
+          <svg class="search-leading-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="7"/>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+          </svg>
+          <input id="searchInput" class="search-input" type="search" placeholder="Search songs, artists, videos..." autocomplete="off" enterkeyhint="search" />
+          <button id="clearSearchBtn" type="button" class="clear-btn hidden" aria-label="Clear search">×</button>
+        </form>
+
+        <div class="filter-row" role="tablist">
+          <button class="filter-chip active" data-filter="all" type="button">All</button>
+          <button class="filter-chip" data-filter="songs" type="button">Songs</button>
+          <button class="filter-chip" data-filter="videos" type="button">Videos</button>
+        </div>
+
+        <div id="searchStatus" class="feed-status">Type a song or artist to search YouTube Music</div>
+        <div id="searchResults" class="track-list"></div>
+      </section>
+    </main>
+
+    <!-- Mini Player (shown on Home / Up Next / Search tabs) -->
+    <div id="miniPlayer" class="mini-player hidden">
+      <div id="miniPlayerTap" class="mini-player-main">
+        <img id="miniArt" class="mini-art" alt="" />
+        <div class="mini-meta">
+          <div id="miniTitle" class="mini-title">Nothing Playing</div>
+          <div id="miniArtist" class="mini-artist">YouTube Music</div>
+        </div>
+      </div>
+      <button id="miniPlayPauseBtn" class="mini-ctrl-btn" aria-label="Play or pause">
+        <svg id="miniPlayIcon" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+        <svg id="miniPauseIcon" viewBox="0 0 24 24" fill="currentColor" class="hidden"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+      </button>
+      <button id="miniNextBtn" class="mini-ctrl-btn" aria-label="Next track">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
+      </button>
+    </div>
+
+    <!-- Bottom Navigation Bar -->
+    <nav class="bottom-nav" aria-label="Main navigation">
+      <button class="nav-btn" data-tab="home" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 10.5L12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/>
+        </svg>
+        <span>Home</span>
+      </button>
+
+      <button class="nav-btn active" data-tab="player" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="9"/>
+          <polygon points="10,8.5 16,12 10,15.5" fill="currentColor" stroke="none"/>
+        </svg>
+        <span>Playing</span>
+      </button>
+
+      <button class="nav-btn" data-tab="queue" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="4" y1="6" x2="20" y2="6"/>
+          <line x1="4" y1="12" x2="14" y2="12"/>
+          <line x1="4" y1="18" x2="14" y2="18"/>
+          <polygon points="17,12 22,15 17,18" fill="currentColor" stroke="none"/>
+        </svg>
+        <span>Up Next</span>
+      </button>
+
+      <button class="nav-btn" data-tab="search" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="11" cy="11" r="7"/>
+          <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+        </svg>
+        <span>Search</span>
+      </button>
+    </nav>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

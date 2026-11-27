@@ -26,6 +26,7 @@ A 60 FPS desktop monitor music visualizer matching the same dark-glass `#00FFFF`
 - **4 Color Themes (`M`):** Pure Cyan (`#00FFFF`), Adaptive Album Art, Matrix Green, and Neon Violet.
 - **3 Backgrounds (`G`):** Matrix Rain + Cover Glow, Blurred Album Art, or Pure Black (OLED).
 - **60 FPS at Native 1440p Fullscreen:** Pre-baked `Format32bppPArgb` background cache, cached album art, and pre-rendered Matrix glyph sprites.
+- **Built-in YouTube Music Phone Remote (`kurobeat.local`):** Includes an in-process HTTP + WebSocket server, `kurobeat.local` mDNS responder (port `8765`), mobile PWA UI (`KuroBeat\web\`), and Chrome/Edge extension (`KuroBeat\extension\`) — control playback, queue, search, and Windows master volume directly from your phone over Wi-Fi (`R` opens the QR connect view).
 - **Monitor & UX Features:** Multi-monitor snap (`1` / `2`), Fullscreen (`F11` / double-click), Borderless draggable/resizable mode (`B`), Always on Top (`T`), and auto-hiding HUD + mouse cursor after 2.4s idle.
 
 | Cyber Bars | Mirror Wave | Radial Ring |
@@ -34,17 +35,29 @@ A 60 FPS desktop monitor music visualizer matching the same dark-glass `#00FFFF`
 
 ---
 
-## Building from Source (Windows 10 / 11)
+## Building & Installing from Source (Windows 10 / 11)
 
 No Visual Studio or SDK installation is needed — both apps compile directly with Windows' built-in `.NET Framework 4.x` C# compiler (`csc.exe`):
 
 ```powershell
-# Build KuroBeat (outputs KuroBeat\KuroBeat.exe)
+# Clone the repo
+git clone https://github.com/Siekpheng/KuroSuite.git
+cd KuroSuite
+
+# One-step KuroBeat install (builds KuroBeat\KuroBeat.exe + creates Start Menu shortcut)
+powershell -ExecutionPolicy Bypass -File .\KuroBeat\install.ps1
+
+# Or build KuroBeat only (outputs KuroBeat\KuroBeat.exe)
 powershell -ExecutionPolicy Bypass -File .\KuroBeat\build.ps1
 
 # Build KuroHUD (outputs KuroHUD\trofeo_lcd.exe)
 powershell -ExecutionPolicy Bypass -File .\KuroHUD\build.ps1
 ```
+
+### YouTube Music Phone Remote Setup (Included in `KuroBeat/`)
+1. Run `.\KuroBeat\install.ps1` and launch **KuroBeat** (allow Private network access in Windows Firewall if prompted).
+2. In Chrome or Edge on the PC, open `chrome://extensions` (or `edge://extensions`), enable **Developer mode**, click **Load unpacked**, and select the cloned `KuroBeat\extension` folder.
+3. Open [music.youtube.com](https://music.youtube.com) on the PC, then open `http://kurobeat.local:8765` on your phone (or press `R` inside KuroBeat for the QR code).
 
 ## KuroBeat Keyboard Shortcuts
 
@@ -58,6 +71,7 @@ powershell -ExecutionPolicy Bypass -File .\KuroHUD\build.ps1
 | `B` | Toggle Borderless Window |
 | `T` | Toggle Always on Top |
 | `H` | Toggle Track Info Card |
+| `R` | Show / Open Phone Remote QR Connect |
 | `Space` / `←` / `→` | Play/Pause, Previous, Next Track |
 
 ## License

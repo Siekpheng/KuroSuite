@@ -11,8 +11,10 @@ using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
+using System.Web.Script.Serialization;
 using System.Windows.Forms;
 using Windows.Foundation;
 using Windows.Media.Control;
@@ -200,48 +202,445 @@ namespace KuroBeat
     }
 
     // =========================================================================
-    // INTEGRATED YOUTUBE MUSIC PHONE REMOTE SERVER (YtmRemoteServer.exe)
+    // BUILT-IN YOUTUBE MUSIC PHONE REMOTE SERVER (HTTP + WS + VOL + MDNS)
     // =========================================================================
+    static class SystemVolume
+    {
+        [ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")]
+        class MMDeviceEnumeratorComObj { }
+
+        [Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        interface IMMDeviceEnum
+        {
+            int EnumAudioEndpoints(int dataFlow, uint dwStateMask, out IntPtr ppDevices);
+            int GetDefaultAudioEndpoint(int dataFlow, int role, out IMMDev ppEndpoint);
+        }
+
+        [Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        interface IMMDev
+        {
+            int Activate(ref Guid iid, uint dwClsCtx, IntPtr pActivationParams, [MarshalAs(UnmanagedType.IUnknown)] out object ppInterface);
+        }
+
+        [Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        interface IAudioEndpointVolume
+        {
+            int RegisterControlChangeNotify(IntPtr pNotify);
+            int UnregisterControlChangeNotify(IntPtr pNotify);
+            int GetChannelCount(out uint pnChannelCount);
+            int SetMasterVolumeLevel(float fLevelDB, ref Guid pguidEventContext);
+            int SetMasterVolumeLevelScalar(float fLevel, ref Guid pguidEventContext);
+            int GetMasterVolumeLevel(out float pfLevelDB);
+            int GetMasterVolumeLevelScalar(out float pfLevel);
+            int SetChannelVolumeLevel(uint nChannel, float fLevelDB, ref Guid pguidEventContext);
+            int SetChannelVolumeLevelScalar(uint nChannel, float fLevel, ref Guid pguidEventContext);
+            int GetChannelVolumeLevel(uint nChannel, out float pfLevelDB);
+            int GetChannelVolumeLevelScalar(uint nChannel, out float pfLevel);
+            int SetMute([MarshalAs(UnmanagedType.Bool)] bool bMute, ref Guid pguidEventContext);
+            int GetMute([MarshalAs(UnmanagedType.Bool)] out bool pbMute);
+        }
+
+        static readonly object AudioLock = new object();
+        static Guid IidEndpointVolume = new Guid("5CDF2C82-841E-4546-9722-0CF74078229A");
+        static Guid EmptyGuid = Guid.Empty;
+
+        static IAudioEndpointVolume GetVolumeInterface()
+        {
+            IMMDeviceEnum enumerator = (IMMDeviceEnum)(new MMDeviceEnumeratorComObj());
+            IMMDev device = null;
+            try
+            {
+                if (enumerator.GetDefaultAudioEndpoint(0, 1, out device) != 0 || device == null)
+                    return null;
+                object obj;
+                if (device.Activate(ref IidEndpointVolume, 23, IntPtr.Zero, out obj) != 0 || obj == null)
+                    return null;
+                return (IAudioEndpointVolume)obj;
+            }
+            finally
+            {
+                if (device != null) Marshal.ReleaseComObject(device);
+                if (enumerator != null) Marshal.ReleaseComObject(enumerator);
+            }
+        }
+
+        public static bool TryGetState(out int volumePercent, out bool muted)
+        {
+            volumePercent = 50;
+            muted = false;
+            lock (AudioLock)
+            {
+                IAudioEndpointVolume ep = null;
+                try
+                {
+                    ep = GetVolumeInterface();
+                    if (ep == null) return false;
+                    float level;
+                    bool isMuted;
+                    ep.GetMasterVolumeLevelScalar(out level);
+                    ep.GetMute(out isMuted);
+                    volumePercent = (int)Math.Round(Math.Max(0f, Math.Min(1f, level)) * 100f);
+                    muted = isMuted;
+                    return true;
+                }
+                catch { return false; }
+                finally { if (ep != null) Marshal.ReleaseComObject(ep); }
+            }
+        }
+
+        public static bool SetVolume(int percent)
+        {
+            int clamped = Math.Max(0, Math.Min(100, percent));
+            lock (AudioLock)
+            {
+                IAudioEndpointVolume ep = null;
+                try
+                {
+                    ep = GetVolumeInterface();
+                    if (ep == null) return false;
+                    Guid ctx = EmptyGuid;
+                    ep.SetMasterVolumeLevelScalar(clamped / 100.0f, ref ctx);
+                    if (clamped > 0)
+                    {
+                        bool isMuted;
+                        ep.GetMute(out isMuted);
+                        if (isMuted) ep.SetMute(false, ref ctx);
+                    }
+                    return true;
+                }
+                catch { return false; }
+                finally { if (ep != null) Marshal.ReleaseComObject(ep); }
+            }
+        }
+
+        public static bool SetMute(bool mute)
+        {
+            lock (AudioLock)
+            {
+                IAudioEndpointVolume ep = null;
+                try
+                {
+                    ep = GetVolumeInterface();
+                    if (ep == null) return false;
+                    Guid ctx = EmptyGuid;
+                    ep.SetMute(mute, ref ctx);
+                    return true;
+                }
+                catch { return false; }
+                finally { if (ep != null) Marshal.ReleaseComObject(ep); }
+            }
+        }
+
+        public static bool ToggleMute()
+        {
+            int vol;
+            bool muted;
+            if (!TryGetState(out vol, out muted)) return false;
+            return SetMute(!muted);
+        }
+
+        public static bool StepVolume(int delta)
+        {
+            int vol;
+            bool muted;
+            if (!TryGetState(out vol, out muted)) return false;
+            return SetVolume(vol + delta);
+        }
+    }
+
+    sealed class WsClient
+    {
+        public string Id { get; private set; }
+        public string Role { get; private set; }
+        readonly TcpClient tcp;
+        readonly NetworkStream stream;
+        readonly object sendLock = new object();
+        public volatile bool Closed;
+
+        public WsClient(TcpClient tcp, NetworkStream stream, string role)
+        {
+            Id = Guid.NewGuid().ToString("N").Substring(0, 8);
+            Role = role;
+            this.tcp = tcp;
+            this.stream = stream;
+        }
+
+        public void SendText(string text)
+        {
+            if (Closed) return;
+            try
+            {
+                byte[] payload = Encoding.UTF8.GetBytes(text);
+                byte[] frame = EncodeFrame(0x81, payload);
+                lock (sendLock)
+                {
+                    if (!Closed)
+                    {
+                        stream.Write(frame, 0, frame.Length);
+                        stream.Flush();
+                    }
+                }
+            }
+            catch { Close(); }
+        }
+
+        public void SendPong(byte[] payload)
+        {
+            if (Closed) return;
+            try
+            {
+                byte[] frame = EncodeFrame(0x8A, payload ?? new byte[0]);
+                lock (sendLock)
+                {
+                    if (!Closed)
+                    {
+                        stream.Write(frame, 0, frame.Length);
+                        stream.Flush();
+                    }
+                }
+            }
+            catch { Close(); }
+        }
+
+        static byte[] EncodeFrame(byte firstByte, byte[] payload)
+        {
+            int len = payload.Length;
+            int headerLen = len < 126 ? 2 : (len <= 65535 ? 4 : 10);
+            byte[] frame = new byte[headerLen + len];
+            frame[0] = firstByte;
+            if (len < 126)
+            {
+                frame[1] = (byte)len;
+            }
+            else if (len <= 65535)
+            {
+                frame[1] = 126;
+                frame[2] = (byte)((len >> 8) & 0xFF);
+                frame[3] = (byte)(len & 0xFF);
+            }
+            else
+            {
+                frame[1] = 127;
+                ulong ulen = (ulong)len;
+                for (int i = 0; i < 8; i++)
+                    frame[2 + i] = (byte)((ulen >> (56 - i * 8)) & 0xFF);
+            }
+            System.Buffer.BlockCopy(payload, 0, frame, headerLen, len);
+            return frame;
+        }
+
+        public void Close()
+        {
+            if (Closed) return;
+            Closed = true;
+            try { stream.Close(); } catch { }
+            try { tcp.Close(); } catch { }
+        }
+    }
+
+    sealed class MdnsResponder : IDisposable
+    {
+        static readonly IPAddress MdnsGroup = IPAddress.Parse("224.0.0.251");
+        const int MdnsPort = 5353;
+        readonly string targetHost;
+        readonly Func<List<string>> getLanIps;
+        Socket sock;
+        Thread thread;
+        volatile bool stopping;
+
+        public MdnsResponder(string hostName, Func<List<string>> getLanIps)
+        {
+            targetHost = hostName.Trim().TrimEnd('.').ToLowerInvariant();
+            this.getLanIps = getLanIps;
+        }
+
+        public void Start()
+        {
+            if (thread != null) return;
+            stopping = false;
+            thread = new Thread(Run) { IsBackground = true, Name = "KuroMdnsResponder" };
+            thread.Start();
+        }
+
+        void Run()
+        {
+            try
+            {
+                sock = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+                sock.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+                sock.Bind(new IPEndPoint(IPAddress.Any, MdnsPort));
+
+                List<string> ips = getLanIps();
+                IPAddress bindIp = ips.Count > 0 ? IPAddress.Parse(ips[0]) : IPAddress.Any;
+                try { sock.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.AddMembership, new MulticastOption(MdnsGroup, bindIp)); }
+                catch { sock.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.AddMembership, new MulticastOption(MdnsGroup)); }
+                try { sock.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.MulticastInterface, bindIp.GetAddressBytes()); } catch { }
+                try { sock.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.MulticastTimeToLive, 255); } catch { }
+
+                var mcastEp = new IPEndPoint(MdnsGroup, MdnsPort);
+                byte[] announce = BuildAResponse(targetHost, bindIp);
+                if (announce != null)
+                {
+                    try { sock.SendTo(announce, mcastEp); } catch { }
+                    Thread.Sleep(200);
+                    if (!stopping) { try { sock.SendTo(announce, mcastEp); } catch { } }
+                }
+
+                byte[] buf = new byte[1500];
+                EndPoint remote = new IPEndPoint(IPAddress.Any, 0);
+                while (!stopping)
+                {
+                    int len = sock.ReceiveFrom(buf, ref remote);
+                    if (len < 12) continue;
+                    ushort flags = (ushort)((buf[2] << 8) | buf[3]);
+                    if ((flags & 0x8000) != 0) continue;
+                    int qdCount = (buf[4] << 8) | buf[5];
+                    if (qdCount <= 0) continue;
+
+                    int offset = 12;
+                    bool matched = false;
+                    bool wantUnicast = false;
+                    for (int q = 0; q < qdCount && offset < len; q++)
+                    {
+                        string qname = ReadDnsName(buf, len, ref offset);
+                        if (offset + 4 > len) break;
+                        ushort qtype = (ushort)((buf[offset] << 8) | buf[offset + 1]);
+                        ushort qclass = (ushort)((buf[offset + 2] << 8) | buf[offset + 3]);
+                        offset += 4;
+
+                        if (string.Equals(qname, targetHost, StringComparison.OrdinalIgnoreCase) &&
+                            (qtype == 1 || qtype == 255))
+                        {
+                            matched = true;
+                            if ((qclass & 0x8000) != 0) wantUnicast = true;
+                        }
+                    }
+
+                    if (matched)
+                    {
+                        List<string> curIps = getLanIps();
+                        IPAddress ip = curIps.Count > 0 ? IPAddress.Parse(curIps[0]) : bindIp;
+                        byte[] resp = BuildAResponse(targetHost, ip);
+                        if (resp != null)
+                        {
+                            try { sock.SendTo(resp, mcastEp); } catch { }
+                            if (wantUnicast) { try { sock.SendTo(resp, remote); } catch { } }
+                        }
+                    }
+                }
+            }
+            catch { }
+            finally
+            {
+                if (sock != null) { try { sock.Close(); } catch { } sock = null; }
+            }
+        }
+
+        static string ReadDnsName(byte[] buf, int len, ref int offset)
+        {
+            var sb = new StringBuilder();
+            int pos = offset;
+            bool jumped = false;
+            int guard = 0;
+            while (pos < len && guard++ < 64)
+            {
+                byte b = buf[pos];
+                if (b == 0)
+                {
+                    if (!jumped) offset = pos + 1;
+                    break;
+                }
+                if ((b & 0xC0) == 0xC0)
+                {
+                    if (pos + 1 >= len) break;
+                    int ptr = ((b & 0x3F) << 8) | buf[pos + 1];
+                    if (!jumped) offset = pos + 2;
+                    jumped = true;
+                    pos = ptr;
+                    continue;
+                }
+                pos++;
+                if (pos + b > len) break;
+                if (sb.Length > 0) sb.Append('.');
+                sb.Append(Encoding.ASCII.GetString(buf, pos, b));
+                pos += b;
+            }
+            return sb.ToString();
+        }
+
+        static byte[] BuildAResponse(string hostName, IPAddress ip)
+        {
+            byte[] ipBytes = ip.GetAddressBytes();
+            if (ipBytes.Length != 4) return null;
+            using (var ms = new MemoryStream())
+            {
+                ms.Write(new byte[] { 0x00, 0x00, 0x84, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00 }, 0, 12);
+                foreach (string label in hostName.Split('.'))
+                {
+                    byte[] lb = Encoding.ASCII.GetBytes(label);
+                    ms.WriteByte((byte)lb.Length);
+                    ms.Write(lb, 0, lb.Length);
+                }
+                ms.WriteByte(0x00);
+                ms.Write(new byte[] { 0x00, 0x01, 0x80, 0x01, 0x00, 0x00, 0x00, 0x78, 0x00, 0x04 }, 0, 10);
+                ms.Write(ipBytes, 0, 4);
+                return ms.ToArray();
+            }
+        }
+
+        public void Dispose()
+        {
+            stopping = true;
+            if (sock != null) { try { sock.Close(); } catch { } sock = null; }
+            thread = null;
+        }
+    }
+
     sealed class YtmRemoteBridge : IDisposable
     {
-        [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
-        static extern IntPtr CreateJobObject(IntPtr lpJobAttributes, string lpName);
-        [DllImport("kernel32.dll")]
-        static extern bool SetInformationJobObject(IntPtr hJob, int JobObjectInfoClass, IntPtr lpJobObjectInfo, uint cbJobObjectInfoLength);
-        [DllImport("kernel32.dll", SetLastError = true)]
-        static extern bool AssignProcessToJobObject(IntPtr hJob, IntPtr hProcess);
-
         readonly int port;
-        readonly IntPtr job;
-        readonly object procLock = new object();
-        Process proc;
-        bool ownedByUs;
+        readonly object lifecycleLock = new object();
+        readonly object clientsLock = new object();
+        readonly object stateLock = new object();
+        readonly List<WsClient> clients = new List<WsClient>();
+        readonly Dictionary<string, object> playbackState = new Dictionary<string, object>
+        {
+            { "title", "" },
+            { "artist", "" },
+            { "artwork", "" },
+            { "isPlaying", false },
+            { "currentTime", 0.0 },
+            { "duration", 0.0 }
+        };
+
+        int lastVolume = -1;
+        bool lastMuted = false;
+        TcpListener listener;
+        Thread acceptThread;
+        Thread volThread;
+        MdnsResponder mdns;
+        volatile bool stopping;
+        volatile bool hostingInProcess;
         bool runningExternal;
+        string webRoot;
         string lastError = "";
 
-        public string ExePath { get; private set; }
         public string ConnectUrl { get { return "http://127.0.0.1:" + port + "/connect"; } }
         public string PhoneUrl { get { return "http://kurobeat.local:" + port; } }
         public bool IsRunning
         {
             get
             {
-                lock (procLock)
-                {
-                    if (proc != null)
-                    {
-                        try { if (!proc.HasExited) return true; } catch { }
-                    }
-                    return runningExternal && IsPortOpen(port);
-                }
+                if (hostingInProcess) return true;
+                return runningExternal && IsPortOpen(port);
             }
         }
         public string StatusLabel
         {
             get
             {
-                if (string.IsNullOrEmpty(ExePath)) return "YtmRemoteServer.exe not found";
                 if (IsRunning) return PhoneUrl;
+                if (string.IsNullOrEmpty(webRoot)) return "web/ folder missing";
                 if (!string.IsNullOrEmpty(lastError)) return lastError;
                 return "Stopped";
             }
@@ -250,47 +649,36 @@ namespace KuroBeat
         public YtmRemoteBridge(int port)
         {
             this.port = port;
-            ExePath = ResolveExePath();
-            job = CreateKillOnCloseJob();
+            webRoot = ResolveWebRoot();
         }
 
-        static string ResolveExePath()
+        static string ResolveWebRoot()
         {
             string baseDir = AppDomain.CurrentDomain.BaseDirectory.TrimEnd('\\');
             string parentDir = Path.GetDirectoryName(baseDir) ?? "";
+            string docs = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
             string[] candidates =
             {
-                Path.Combine(baseDir, "YtmRemoteServer.exe"),
-                Path.Combine(parentDir, @"ytm-remote\YtmRemoteServer.exe"),
-                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), @"ytm-remote\YtmRemoteServer.exe"),
-                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), @"Documents\ytm-remote\YtmRemoteServer.exe")
+                Path.Combine(baseDir, "web"),
+                Path.Combine(parentDir, "web"),
+                Path.Combine(docs, @"KuroBeat\web"),
+                Path.Combine(docs, @"ytm-remote\web")
             };
             foreach (string c in candidates)
             {
-                if (!string.IsNullOrEmpty(c) && File.Exists(c)) return c;
+                if (!string.IsNullOrEmpty(c) && Directory.Exists(c) && File.Exists(Path.Combine(c, "index.html")))
+                    return Path.GetFullPath(c);
             }
             return null;
         }
 
-        static IntPtr CreateKillOnCloseJob()
-        {
-            IntPtr h = CreateJobObject(IntPtr.Zero, null);
-            if (h == IntPtr.Zero) return IntPtr.Zero;
-            IntPtr info = Marshal.AllocHGlobal(144);
-            for (int i = 0; i < 144; i++) Marshal.WriteByte(info, i, 0);
-            Marshal.WriteInt32(info, 16, 0x00002000); // JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
-            SetInformationJobObject(h, 9, info, 144);
-            Marshal.FreeHGlobal(info);
-            return h;
-        }
-
-        static bool IsPortOpen(int port)
+        static bool IsPortOpen(int p)
         {
             try
             {
                 using (var tcp = new TcpClient())
                 {
-                    IAsyncResult ar = tcp.BeginConnect("127.0.0.1", port, null, null);
+                    IAsyncResult ar = tcp.BeginConnect("127.0.0.1", p, null, null);
                     bool ok = ar.AsyncWaitHandle.WaitOne(120, false);
                     if (!ok) return false;
                     tcp.EndConnect(ar);
@@ -300,8 +688,10 @@ namespace KuroBeat
             catch { return false; }
         }
 
-        static string GetPrimaryLanIp()
+        static List<string> GetLanIps()
         {
+            var preferred = new List<string>();
+            var others = new List<string>();
             try
             {
                 foreach (NetworkInterface ni in NetworkInterface.GetAllNetworkInterfaces())
@@ -313,75 +703,592 @@ namespace KuroBeat
                         name.Contains("vbox") || name.Contains("warp") || name.Contains("tailscale") ||
                         name.Contains("zerotier") || name.Contains("wsl"))
                         continue;
-                    foreach (UnicastIPAddressInformation addr in ni.GetIPProperties().UnicastAddresses)
+
+                    IPInterfaceProperties props = ni.GetIPProperties();
+                    foreach (UnicastIPAddressInformation addr in props.UnicastAddresses)
                     {
                         if (addr.Address.AddressFamily != AddressFamily.InterNetwork) continue;
                         string ip = addr.Address.ToString();
+                        if (ip.StartsWith("169.254.") || ip == "127.0.0.1") continue;
                         if (ip.StartsWith("192.168.") || ip.StartsWith("10.") || ip.StartsWith("172."))
-                            return ip;
+                            preferred.Add(ip);
+                        else
+                            others.Add(ip);
                     }
                 }
             }
             catch { }
-            return "127.0.0.1";
+            preferred.AddRange(others);
+            return preferred;
         }
 
         public void Start()
         {
-            lock (procLock)
+            lock (lifecycleLock)
             {
-                if (IsRunning) return;
-                ExePath = ResolveExePath();
-                if (string.IsNullOrEmpty(ExePath)) { lastError = "Not found"; return; }
+                if (hostingInProcess) return;
+                webRoot = ResolveWebRoot();
+                if (string.IsNullOrEmpty(webRoot))
+                {
+                    lastError = "web/ folder missing";
+                    return;
+                }
                 if (IsPortOpen(port))
                 {
                     runningExternal = true;
-                    ownedByUs = false;
                     lastError = "";
                     return;
                 }
+
+                int initVol;
+                bool initMuted;
+                if (SystemVolume.TryGetState(out initVol, out initMuted))
+                {
+                    lastVolume = initVol;
+                    lastMuted = initMuted;
+                }
+                else
+                {
+                    lastVolume = 50;
+                    lastMuted = false;
+                }
+
                 try
                 {
-                    var psi = new ProcessStartInfo
-                    {
-                        FileName = ExePath,
-                        Arguments = "--port " + port,
-                        WorkingDirectory = Path.GetDirectoryName(ExePath),
-                        UseShellExecute = false,
-                        CreateNoWindow = true,
-                        RedirectStandardOutput = true,
-                        RedirectStandardError = true
-                    };
-                    var p = new Process { StartInfo = psi };
-                    p.OutputDataReceived += (s, e) => { };
-                    p.ErrorDataReceived += (s, e) => { };
-                    if (p.Start())
-                    {
-                        proc = p;
-                        ownedByUs = true;
-                        runningExternal = false;
-                        lastError = "";
-                        if (job != IntPtr.Zero) { try { AssignProcessToJobObject(job, p.Handle); } catch { } }
-                        p.BeginOutputReadLine();
-                        p.BeginErrorReadLine();
-                    }
+                    listener = new TcpListener(IPAddress.Any, port);
+                    listener.Start();
                 }
-                catch (Exception ex) { lastError = ex.Message; }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    listener = null;
+                    return;
+                }
+
+                stopping = false;
+                hostingInProcess = true;
+                runningExternal = false;
+                lastError = "";
+
+                mdns = new MdnsResponder("kurobeat.local", GetLanIps);
+                mdns.Start();
+
+                volThread = new Thread(VolumeMonitorLoop) { IsBackground = true, Name = "KuroRemoteVolMon" };
+                volThread.Start();
+
+                acceptThread = new Thread(AcceptLoop) { IsBackground = true, Name = "KuroRemoteHttp" };
+                acceptThread.Start();
             }
         }
 
         public void Stop()
         {
-            lock (procLock)
+            lock (lifecycleLock)
             {
-                if (ownedByUs && proc != null)
+                stopping = true;
+                hostingInProcess = false;
+                if (mdns != null) { mdns.Dispose(); mdns = null; }
+                if (listener != null) { try { listener.Stop(); } catch { } listener = null; }
+
+                List<WsClient> snapshot;
+                lock (clientsLock)
                 {
-                    try { if (!proc.HasExited) proc.Kill(); } catch { }
-                    try { proc.Dispose(); } catch { }
-                    proc = null;
-                    ownedByUs = false;
+                    snapshot = new List<WsClient>(clients);
+                    clients.Clear();
+                }
+                foreach (var c in snapshot) c.Close();
+            }
+        }
+
+        void AcceptLoop()
+        {
+            while (!stopping)
+            {
+                try
+                {
+                    TcpClient tcp = listener.AcceptTcpClient();
+                    ThreadPool.QueueUserWorkItem(HandleConnection, tcp);
+                }
+                catch
+                {
+                    if (stopping) break;
+                    Thread.Sleep(200);
                 }
             }
+        }
+
+        void VolumeMonitorLoop()
+        {
+            while (!stopping)
+            {
+                try
+                {
+                    int vol;
+                    bool muted;
+                    if (SystemVolume.TryGetState(out vol, out muted))
+                    {
+                        bool changed = false;
+                        lock (stateLock)
+                        {
+                            if (vol != lastVolume || muted != lastMuted)
+                            {
+                                lastVolume = vol;
+                                lastMuted = muted;
+                                changed = true;
+                            }
+                        }
+                        if (changed) BroadcastSystemVolume();
+                    }
+                }
+                catch { }
+                Thread.Sleep(250);
+            }
+        }
+
+        void HandleConnection(object state)
+        {
+            TcpClient tcp = (TcpClient)state;
+            tcp.NoDelay = true;
+            NetworkStream stream = null;
+            try
+            {
+                stream = tcp.GetStream();
+                string rawHeaders = ReadHttpHeaders(stream);
+                if (string.IsNullOrEmpty(rawHeaders)) { tcp.Close(); return; }
+
+                string[] lines = rawHeaders.Split(new[] { "\r\n" }, StringSplitOptions.None);
+                if (lines.Length == 0) { tcp.Close(); return; }
+                string[] reqParts = lines[0].Split(' ');
+                if (reqParts.Length < 2) { tcp.Close(); return; }
+                string method = reqParts[0].ToUpperInvariant();
+                string rawTarget = reqParts[1];
+
+                var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                for (int i = 1; i < lines.Length; i++)
+                {
+                    int colon = lines[i].IndexOf(':');
+                    if (colon > 0)
+                        headers[lines[i].Substring(0, colon).Trim()] = lines[i].Substring(colon + 1).Trim();
+                }
+
+                string path = rawTarget;
+                string query = "";
+                int qIdx = rawTarget.IndexOf('?');
+                if (qIdx >= 0)
+                {
+                    path = rawTarget.Substring(0, qIdx);
+                    query = rawTarget.Substring(qIdx + 1);
+                }
+
+                string upgrade;
+                if (headers.TryGetValue("Upgrade", out upgrade) &&
+                    upgrade.Equals("websocket", StringComparison.OrdinalIgnoreCase))
+                {
+                    HandleWebSocket(tcp, stream, headers, query);
+                    return;
+                }
+
+                HandleHttpRequest(stream, method, path);
+                tcp.Close();
+            }
+            catch
+            {
+                try { if (stream != null) stream.Close(); } catch { }
+                try { tcp.Close(); } catch { }
+            }
+        }
+
+        static string ReadHttpHeaders(NetworkStream stream)
+        {
+            stream.ReadTimeout = 10000;
+            var ms = new MemoryStream();
+            byte[] buf = new byte[1];
+            int match = 0;
+            while (ms.Length < 16384)
+            {
+                int read = stream.Read(buf, 0, 1);
+                if (read <= 0) return null;
+                byte b = buf[0];
+                ms.WriteByte(b);
+                if ((match == 0 && b == '\r') ||
+                    (match == 1 && b == '\n') ||
+                    (match == 2 && b == '\r') ||
+                    (match == 3 && b == '\n'))
+                {
+                    match++;
+                    if (match == 4) break;
+                }
+                else
+                {
+                    match = (b == '\r') ? 1 : 0;
+                }
+            }
+            return Encoding.UTF8.GetString(ms.ToArray());
+        }
+
+        void HandleHttpRequest(NetworkStream stream, string method, string path)
+        {
+            if (method == "OPTIONS")
+            {
+                SendHttpResponse(stream, "204 No Content", "text/plain", new byte[0]);
+                return;
+            }
+
+            if (path == "/api/info")
+            {
+                int extCount = 0;
+                int phoneCount = 0;
+                lock (clientsLock)
+                {
+                    foreach (var c in clients)
+                    {
+                        if (!c.Closed)
+                        {
+                            if (c.Role == "extension") extCount++;
+                            else if (c.Role == "phone") phoneCount++;
+                        }
+                    }
+                }
+                List<string> ips = GetLanIps();
+                string primary = ips.Count > 0 ? ips[0] : "127.0.0.1";
+                var info = new Dictionary<string, object>
+                {
+                    { "port", port },
+                    { "primaryIp", primary },
+                    { "lanIps", ips },
+                    { "phoneUrl", PhoneUrl },
+                    { "ipUrl", "http://" + primary + ":" + port },
+                    { "extensionConnected", extCount > 0 },
+                    { "extensionCount", extCount },
+                    { "phoneCount", phoneCount },
+                    { "volume", lastVolume },
+                    { "muted", lastMuted }
+                };
+                string json = new JavaScriptSerializer().Serialize(info);
+                SendHttpResponse(stream, "200 OK", "application/json; charset=utf-8", Encoding.UTF8.GetBytes(json));
+                return;
+            }
+
+            if (path == "/" || path == "") path = "/index.html";
+            else if (path == "/connect") path = "/connect.html";
+
+            string relPath = path.TrimStart('/').Replace('/', Path.DirectorySeparatorChar);
+            if (relPath.Contains("..") || string.IsNullOrEmpty(webRoot))
+            {
+                SendHttpResponse(stream, "403 Forbidden", "text/plain", Encoding.UTF8.GetBytes("Forbidden"));
+                return;
+            }
+
+            string fullPath = Path.GetFullPath(Path.Combine(webRoot, relPath));
+            if (!fullPath.StartsWith(webRoot, StringComparison.OrdinalIgnoreCase) || !File.Exists(fullPath))
+            {
+                SendHttpResponse(stream, "404 Not Found", "text/plain", Encoding.UTF8.GetBytes("Not Found"));
+                return;
+            }
+
+            byte[] content = File.ReadAllBytes(fullPath);
+            SendHttpResponse(stream, "200 OK", GetMimeType(Path.GetExtension(fullPath)), content);
+        }
+
+        static void SendHttpResponse(NetworkStream stream, string status, string contentType, byte[] body)
+        {
+            string header =
+                "HTTP/1.1 " + status + "\r\n" +
+                "Content-Type: " + contentType + "\r\n" +
+                "Content-Length: " + body.Length + "\r\n" +
+                "Cache-Control: no-cache\r\n" +
+                "Access-Control-Allow-Origin: *\r\n" +
+                "Connection: close\r\n\r\n";
+            byte[] headerBytes = Encoding.UTF8.GetBytes(header);
+            stream.Write(headerBytes, 0, headerBytes.Length);
+            if (body.Length > 0) stream.Write(body, 0, body.Length);
+            stream.Flush();
+        }
+
+        static string GetMimeType(string ext)
+        {
+            switch (ext.ToLowerInvariant())
+            {
+                case ".html": return "text/html; charset=utf-8";
+                case ".css": return "text/css; charset=utf-8";
+                case ".js": return "application/javascript; charset=utf-8";
+                case ".json": return "application/json; charset=utf-8";
+                case ".svg": return "image/svg+xml";
+                case ".png": return "image/png";
+                case ".ico": return "image/x-icon";
+                default: return "application/octet-stream";
+            }
+        }
+
+        void HandleWebSocket(TcpClient tcp, NetworkStream stream, Dictionary<string, string> headers, string query)
+        {
+            string wsKey;
+            if (!headers.TryGetValue("Sec-WebSocket-Key", out wsKey)) { tcp.Close(); return; }
+
+            string acceptKey = ComputeWebSocketAcceptKey(wsKey);
+            string handshake =
+                "HTTP/1.1 101 Switching Protocols\r\n" +
+                "Upgrade: websocket\r\n" +
+                "Connection: Upgrade\r\n" +
+                "Sec-WebSocket-Accept: " + acceptKey + "\r\n\r\n";
+            byte[] handshakeBytes = Encoding.UTF8.GetBytes(handshake);
+            stream.Write(handshakeBytes, 0, handshakeBytes.Length);
+            stream.Flush();
+
+            string role = query.IndexOf("role=extension", StringComparison.OrdinalIgnoreCase) >= 0 ? "extension" : "phone";
+            var client = new WsClient(tcp, stream, role);
+            lock (clientsLock) clients.Add(client);
+
+            if (role == "phone") client.SendText(BuildFullStateMessage());
+            else if (role == "extension") BroadcastFullStateToPhones();
+
+            stream.ReadTimeout = Timeout.Infinite;
+            try
+            {
+                while (!client.Closed && !stopping)
+                {
+                    int opcode;
+                    byte[] payload = ReadWebSocketFrame(stream, out opcode);
+                    if (payload == null || opcode == 0x8) break;
+                    if (opcode == 0x9) client.SendPong(payload);
+                    else if (opcode == 0x1) ProcessWsMessage(client, Encoding.UTF8.GetString(payload));
+                }
+            }
+            catch { }
+            finally
+            {
+                client.Close();
+                lock (clientsLock) clients.Remove(client);
+                if (!stopping && role == "extension") BroadcastFullStateToPhones();
+            }
+        }
+
+        static string ComputeWebSocketAcceptKey(string key)
+        {
+            string combined = key.Trim() + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+            using (SHA1 sha1 = SHA1.Create())
+                return Convert.ToBase64String(sha1.ComputeHash(Encoding.UTF8.GetBytes(combined)));
+        }
+
+        static bool ReadExact(NetworkStream stream, byte[] buffer, int offset, int count)
+        {
+            int total = 0;
+            while (total < count)
+            {
+                int read = stream.Read(buffer, offset + total, count - total);
+                if (read <= 0) return false;
+                total += read;
+            }
+            return true;
+        }
+
+        static byte[] ReadWebSocketFrame(NetworkStream stream, out int opcode)
+        {
+            opcode = 0;
+            byte[] header = new byte[2];
+            if (!ReadExact(stream, header, 0, 2)) return null;
+            opcode = header[0] & 0x0F;
+            bool masked = (header[1] & 0x80) != 0;
+            long payloadLen = header[1] & 0x7F;
+
+            if (payloadLen == 126)
+            {
+                byte[] ext = new byte[2];
+                if (!ReadExact(stream, ext, 0, 2)) return null;
+                payloadLen = (ext[0] << 8) | ext[1];
+            }
+            else if (payloadLen == 127)
+            {
+                byte[] ext = new byte[8];
+                if (!ReadExact(stream, ext, 0, 8)) return null;
+                payloadLen = 0;
+                for (int i = 0; i < 8; i++) payloadLen = (payloadLen << 8) | ext[i];
+            }
+            if (payloadLen < 0 || payloadLen > 1024 * 1024) return null;
+
+            byte[] maskKey = null;
+            if (masked)
+            {
+                maskKey = new byte[4];
+                if (!ReadExact(stream, maskKey, 0, 4)) return null;
+            }
+
+            byte[] payload = new byte[(int)payloadLen];
+            if (payloadLen > 0 && !ReadExact(stream, payload, 0, (int)payloadLen)) return null;
+
+            if (masked && maskKey != null)
+            {
+                for (int i = 0; i < payload.Length; i++)
+                    payload[i] = (byte)(payload[i] ^ maskKey[i % 4]);
+            }
+            return payload;
+        }
+
+        void ProcessWsMessage(WsClient sender, string rawJson)
+        {
+            Dictionary<string, object> data;
+            try { data = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(rawJson); }
+            catch { return; }
+            if (data == null || !data.ContainsKey("type")) return;
+            string type = Convert.ToString(data["type"]);
+
+            if (sender.Role == "extension")
+            {
+                if (type == "playbackState")
+                {
+                    lock (stateLock)
+                    {
+                        UpdateField(data, "title");
+                        UpdateField(data, "artist");
+                        UpdateField(data, "artwork");
+                        UpdateField(data, "isPlaying");
+                        UpdateField(data, "currentTime");
+                        UpdateField(data, "duration");
+                        UpdateField(data, "nextTitle");
+                        UpdateField(data, "nextArtist");
+                    }
+                    BroadcastFullStateToPhones();
+                }
+                else if (type == "searchResults" || type == "homeFeed" || type == "queueState")
+                {
+                    ForwardToPhones(rawJson);
+                }
+            }
+            else if (sender.Role == "phone" && type == "command")
+            {
+                string action = data.ContainsKey("action") ? Convert.ToString(data["action"]) : "";
+                if (action == "setVolume")
+                {
+                    int val = Convert.ToInt32(Math.Round(Convert.ToDouble(data["value"])));
+                    if (SystemVolume.SetVolume(val)) SyncAndBroadcastVolume();
+                }
+                else if (action == "toggleMute")
+                {
+                    if (SystemVolume.ToggleMute()) SyncAndBroadcastVolume();
+                }
+                else if (action == "volumeStep")
+                {
+                    int delta = Convert.ToInt32(data["delta"]);
+                    if (SystemVolume.StepVolume(delta)) SyncAndBroadcastVolume();
+                }
+                else if (action == "search" || action == "getHome" || action == "getQueue")
+                {
+                    if (!HasExtensionConnected())
+                    {
+                        string respType = action == "search" ? "searchResults" : (action == "getHome" ? "homeFeed" : "queueState");
+                        var errResp = new Dictionary<string, object>
+                        {
+                            { "type", respType },
+                            { "requestId", data.ContainsKey("requestId") ? data["requestId"] : "" },
+                            { "error", "YouTube Music tab is not connected on your PC." }
+                        };
+                        sender.SendText(new JavaScriptSerializer().Serialize(errResp));
+                    }
+                    else
+                    {
+                        ForwardToFirstExtension(rawJson);
+                    }
+                }
+                else if (action == "playPause" || action == "next" || action == "prev" || action == "seek" || action == "playTrack" || action == "playQueueIndex")
+                {
+                    ForwardToExtensions(rawJson);
+                }
+            }
+        }
+
+        void UpdateField(Dictionary<string, object> src, string key)
+        {
+            if (src.ContainsKey(key) && src[key] != null)
+                playbackState[key] = src[key];
+        }
+
+        void SyncAndBroadcastVolume()
+        {
+            int vol;
+            bool muted;
+            if (SystemVolume.TryGetState(out vol, out muted))
+            {
+                lock (stateLock) { lastVolume = vol; lastMuted = muted; }
+                BroadcastSystemVolume();
+            }
+        }
+
+        bool HasExtensionConnected()
+        {
+            lock (clientsLock)
+            {
+                foreach (var c in clients)
+                    if (!c.Closed && c.Role == "extension") return true;
+            }
+            return false;
+        }
+
+        string BuildFullStateMessage()
+        {
+            bool extConnected = HasExtensionConnected();
+            Dictionary<string, object> payload;
+            lock (stateLock)
+            {
+                payload = new Dictionary<string, object>
+                {
+                    { "type", "state" },
+                    { "extensionConnected", extConnected },
+                    { "playback", new Dictionary<string, object>(playbackState) },
+                    { "systemVolume", new Dictionary<string, object> { { "volume", lastVolume }, { "muted", lastMuted } } }
+                };
+            }
+            return new JavaScriptSerializer().Serialize(payload);
+        }
+
+        void BroadcastFullStateToPhones()
+        {
+            string msg = BuildFullStateMessage();
+            ForwardToPhones(msg);
+        }
+
+        void BroadcastSystemVolume()
+        {
+            Dictionary<string, object> payload;
+            lock (stateLock)
+            {
+                payload = new Dictionary<string, object> { { "type", "systemVolume" }, { "volume", lastVolume }, { "muted", lastMuted } };
+            }
+            ForwardToPhones(new JavaScriptSerializer().Serialize(payload));
+        }
+
+        void ForwardToExtensions(string rawJson)
+        {
+            List<WsClient> targets = new List<WsClient>();
+            lock (clientsLock)
+            {
+                foreach (var c in clients)
+                    if (!c.Closed && c.Role == "extension") targets.Add(c);
+            }
+            foreach (var c in targets) c.SendText(rawJson);
+        }
+
+        void ForwardToFirstExtension(string rawJson)
+        {
+            WsClient target = null;
+            lock (clientsLock)
+            {
+                foreach (var c in clients)
+                {
+                    if (!c.Closed && c.Role == "extension") { target = c; break; }
+                }
+            }
+            if (target != null) target.SendText(rawJson);
+        }
+
+        void ForwardToPhones(string rawJson)
+        {
+            List<WsClient> targets = new List<WsClient>();
+            lock (clientsLock)
+            {
+                foreach (var c in clients)
+                    if (!c.Closed && c.Role == "phone") targets.Add(c);
+            }
+            foreach (var c in targets) c.SendText(rawJson);
         }
 
         public void OpenConnectPage()

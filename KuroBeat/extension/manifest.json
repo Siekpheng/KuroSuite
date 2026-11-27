@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "YouTube Music Phone Remote Bridge",
+  "version": "1.2.0",
+  "description": "Connects YouTube Music in your browser to the local Phone Remote webapp.",
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "YouTube Music Phone Remote"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://music.youtube.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["page-bridge.js"],
+      "matches": ["https://music.youtube.com/*"]
+    }
+  ]
+}

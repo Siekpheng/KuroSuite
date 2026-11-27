@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>YTM Phone Remote</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 16px;
+      width: 260px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #121216;
+      color: #f4f4f6;
+    }
+    h1 {
+      margin: 0 0 10px;
+      font-size: 15px;
+      font-weight: 600;
+    }
+    .status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      background: #1d1d24;
+      font-size: 13px;
+      margin-bottom: 12px;
+    }
+    .dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: #ef4444;
+      flex-shrink: 0;
+    }
+    .dot.ok {
+      background: #22c55e;
+      box-shadow: 0 0 8px rgba(34, 197, 94, 0.7);
+    }
+    .track {
+      font-size: 12px;
+      color: #a1a1aa;
+      margin-bottom: 12px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    button {
+      width: 100%;
+      padding: 9px 12px;
+      border: none;
+      border-radius: 8px;
+      background: #ff2e55;
+      color: #fff;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:hover {
+      background: #e11d48;
+    }
+  </style>
+</head>
+<body>
+  <h1>YTM Phone Remote</h1>
+  <div class="status">
+    <span id="dot" class="dot"></span>
+    <span id="statusText">Checking server...</span>
+  </div>
+  <div id="track" class="track">Open music.youtube.com to sync</div>
+  <button id="openConnect">Open QR Code / Setup</button>
+  <script src="popup.js"></script>
+</body>
+</html>
